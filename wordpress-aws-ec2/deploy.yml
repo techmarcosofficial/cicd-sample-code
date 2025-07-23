@@ -1,0 +1,209 @@
+name: WordPress Deployment CI/CD Pipeline
+
+on:
+  push:
+    branches: 
+      - production
+      - dev
+      - qa
+      - hot-fix
+
+jobs:
+  prod-deploy:
+    if: github.ref == 'refs/heads/production'
+    name: Deploy to Production EC2
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v1
+        with:
+          node-version: 20.19.0
+
+      - name: Install & Build Theme
+        run: cd ${{ vars.TARGET_THEME_DIR }} && composer install --ignore-platform-reqs --no-plugins && npm install && npm run build:production
+
+      - name: Update WCS Staging File  
+        uses: canastro/copy-file-action@master
+        with:
+          source: "./public/wp-content/class-wcs-staging.php"
+          target: "./public/wp-content/plugins/woocommerce-subscriptions/vendor/woocommerce/subscriptions-core/includes/class-wcs-staging.php"
+
+      - name: Deploy to Production Server
+        uses: easingthemes/ssh-deploy@main
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_KEY_PROD }}
+          ARGS: >-
+            -rlgoDzvc
+            --exclude='.git'
+            --exclude='/public/.htaccess'
+            --exclude='/public/wp-content/cache'
+            --exclude='/public/wp-content/uploads'
+            --exclude='/public/wp-config.php'
+            --del
+          REMOTE_HOST: ${{ vars.HOST_PROD }}
+          REMOTE_USER: ${{ vars.USER_PROD }}
+          TARGET: ${{ vars.TARGET_DIR_PROD }}
+          SCRIPT_AFTER: |
+            cd ${{ vars.TARGET_DIR_PROD }}/public
+            aws s3 sync . ${{ vars.AWS_S3_BUCKET_PROD }}
+            cd wp-content/themes/sage
+            composer require roots/acorn
+            wp acorn acorn:install
+
+  hot-fix-deploy:
+    if: github.ref == 'refs/heads/hot-fix'
+    name: Deploy Hot-Fix to EC2
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v1
+        with:
+          node-version: 20.19.0
+
+      - name: Install & Build Theme
+        run: cd ${{ vars.TARGET_THEME_DIR }} && composer install --ignore-platform-reqs --no-plugins && npm install && npm run build:production
+
+      - name: Update WCS Staging File  
+        uses: canastro/copy-file-action@master
+        with:
+          source: "./public/wp-content/class-wcs-staging.php"
+          target: "./public/wp-content/plugins/woocommerce-subscriptions/vendor/woocommerce/subscriptions-core/includes/class-wcs-staging.php"
+
+      - name: Deploy to Hot-Fix Server
+        uses: easingthemes/ssh-deploy@main
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_KEY_HOTFIX }}
+          ARGS: >-
+            -rlgoDzvc
+            --exclude='.git'
+            --exclude='/public/.htaccess'
+            --exclude='/public/wp-content/cache'
+            --exclude='/public/wp-content/uploads'
+            --exclude='/public/wp-config.php'
+            --del
+          REMOTE_HOST: ${{ vars.HOST_HOTFIX }}
+          REMOTE_USER: ${{ vars.USER_HOTFIX }}
+          TARGET: ${{ vars.TARGET_DIR_HOTFIX }}
+          SCRIPT_AFTER: |
+            cd ${{ vars.TARGET_DIR_HOTFIX }}/public
+            cd wp-content/themes/sage
+            composer require roots/acorn
+            wp acorn acorn:install
+
+  dev-deploy:
+    if: github.ref == 'refs/heads/dev'
+    name: Deploy Dev to EC2
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v1
+        with:
+          node-version: 20.19.0
+
+      - name: Install & Build Theme
+        run: cd ${{ vars.TARGET_THEME_DIR }} && composer install --ignore-platform-reqs --no-plugins && npm install && npm run build:production
+
+      - name: Update WCS Staging File  
+        uses: canastro/copy-file-action@master
+        with:
+          source: "./public/wp-content/class-wcs-staging.php"
+          target: "./public/wp-content/plugins/woocommerce-subscriptions/vendor/woocommerce/subscriptions-core/includes/class-wcs-staging.php"
+
+      - name: Deploy to Dev Server
+        uses: easingthemes/ssh-deploy@main
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_KEY_DEV }}
+          ARGS: >-
+            -rlgoDzvc
+            --exclude='.git'
+            --exclude='/public/.htaccess'
+            --exclude='/public/wp-content/cache'
+            --exclude='/public/wp-content/uploads'
+            --exclude='/public/wp-config.php'
+            --del
+          REMOTE_HOST: ${{ vars.HOST_DEV }}
+          REMOTE_USER: ${{ vars.USER_DEV }}
+          TARGET: ${{ vars.TARGET_DIR_DEV }}
+          SCRIPT_AFTER: |
+            cd ${{ vars.TARGET_DIR_DEV }}/public
+            aws s3 sync . ${{ vars.AWS_S3_BUCKET_DEV }}
+            cd wp-content/themes/sage
+            composer require roots/acorn
+            wp acorn acorn:install
+
+  qa-deploy:
+    if: github.ref == 'refs/heads/qa'
+    name: Deploy QA to EC2
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v1
+        with:
+          node-version: 20.19.0
+
+      - name: Install & Build Theme
+        run: cd ${{ vars.TARGET_THEME_DIR }} && composer install --ignore-platform-reqs --no-plugins && npm install && npm run build:production
+
+      - name: Update WCS Staging File  
+        uses: canastro/copy-file-action@master
+        with:
+          source: "./public/wp-content/class-wcs-staging.php"
+          target: "./public/wp-content/plugins/woocommerce-subscriptions/vendor/woocommerce/subscriptions-core/includes/class-wcs-staging.php"
+
+      - name: Deploy to QA Server
+        uses: easingthemes/ssh-deploy@main
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_KEY_QA }}
+          ARGS: >-
+            -rlgoDzvc
+            --exclude='.git'
+            --exclude='/public/.htaccess'
+            --exclude='/public/wp-content/cache'
+            --exclude='/public/wp-content/uploads'
+            --exclude='/public/wp-config.php'
+            --del
+          REMOTE_HOST: ${{ vars.HOST_QA }}
+          REMOTE_USER: ${{ vars.USER_QA }}
+          TARGET: ${{ vars.TARGET_DIR_QA }}
+          SCRIPT_AFTER: |
+            cd ${{ vars.TARGET_DIR_QA }}/public
+            aws s3 sync . ${{ vars.AWS_S3_BUCKET_QA }}
+            cd wp-content/themes/sage
+            composer require roots/acorn
+            wp acorn acorn:install
