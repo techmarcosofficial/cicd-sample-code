@@ -1,0 +1,172 @@
+name: Deploy app to AWS Elastic Beanstalk
+
+on:
+  push:
+    branches:
+      - main  # Trigger deployment only on main branch pushes
+
+permissions:
+  id-token: write  # Required for GitHub OIDC to assume AWS role
+  contents: read   # Needed to checkout the repository
+
+jobs:
+  deploy:
+    name: Build & Deploy to Elastic Beanstalk
+    runs-on: ubuntu-latest
+
+    env:
+      PHP_VERSION: '8.4'
+      AWS_REGION: 'eu-west-1'
+      EB_APP_NAME: 'backend-apis'
+      EB_ENV_NAME: 'backend-apis-prod-env'
+      EB_S3_BUCKET: 'elasticbeanstalk-eu-west-1-xxxxxxxxxxxx'
+      DEPLOY_ARTIFACT: 'backend-apis-${{ github.run_id }}.zip'
+      VERSION_LABEL: 'v-${{ github.run_id }}-${{ github.run_number }}'
+
+    steps:
+
+      # 1. Checkout code
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      # 2. Setup PHP and Composer for CakePHP
+      - name: Setup PHP environment
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: mbstring, intl, pdo, pdo_mysql, redis
+          tools: composer
+
+      # 3. Cache Composer dependencies
+      - name: Cache Composer packages
+        uses: actions/cache@v4
+        with:
+          path: vendor
+          key: composer-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-
+
+      # 4. Install Composer dependencies
+      - name: Install PHP dependencies
+        run: composer install --no-dev --optimize-autoloader
+
+      # 5. Create deployment package
+      - name: Create deployment ZIP
+        run: |
+          zip -r ${{ env.DEPLOY_ARTIFACT }} . \
+            -x '*.git*' \
+            -x '*.github*' \
+            -x 'tests/*'
+
+      # 6. Configure AWS OIDC credentials
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::xxxxxxxxxxxx:role/GitHubEBDeployRole
+          role-session-name: GitHubDeploySession
+          aws-region: ${{ env.AWS_REGION }}
+
+      # 7. Upload ZIP artifact to Elastic Beanstalk S3 bucket
+      - name: Upload artifact to S3
+        run: |
+          aws s3 cp ${{ env.DEPLOY_ARTIFACT }} s3://${{ env.EB_S3_BUCKET }}/${{ env.DEPLOY_ARTIFACT }}
+
+      # 8. Register new EB application version & trigger deployment
+      - name: Create EB version and deploy
+        run: |
+          aws elasticbeanstalk create-application-version \
+            --application-name ${{ env.EB_APP_NAME }} \
+            --version-label ${{ env.VERSION_LABEL }} \
+            --source-bundle S3Bucket=${{ env.EB_S3_BUCKET }},S3Key=${{ env.DEPLOY_ARTIFACT }}
+
+          aws elasticbeanstalk update-environment \
+            --environment-name ${{ env.EB_ENV_NAME }} \
+            --version-label ${{ env.VERSION_LABEL }}
+
+  notify-developer:
+    name: Notify developer about pushes
+    runs-on: ubuntu-latest
+    needs: deploy
+    steps:
+      - name: Send Telegram Notification to developer
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_DEVELOPER_ID }}
+        run: |
+          EVENT_TYPE="${{ github.event_name }}"
+          EVENT_ACTION="${{ github.event.action }}"
+          ACTOR="${{ github.actor }}"
+          REPO="${{ github.repository }}"
+          REPO_URL="https://github.com/$REPO"
+          BRANCH="${{ github.ref }}"
+          BRANCH_NAME="${BRANCH##*/}"
+          
+          # Initialize variables
+          TITLE=""
+          URL=""
+          COMMITS=""
+          MESSAGE=""
+          
+          # Set message content based on event type
+          case "$EVENT_TYPE" in
+            "push")
+              TITLE="${{ github.event.head_commit.message }}"
+              URL="${{ github.event.compare }}"
+              TYPE_EMOJI="🫸🏼"
+              ;;
+            "issues")
+              TITLE="${{ github.event.issue.title }}"
+              URL="${{ github.event.issue.html_url }}"
+              TYPE_EMOJI="😱"
+              ;;
+            "pull_request")
+              TITLE="${{ github.event.pull_request.title }}"
+              URL="${{ github.event.pull_request.html_url }}"
+              TYPE_EMOJI="😎"
+              ;;
+            "issue_comment")
+              TITLE="${{ github.event.issue.title }}"
+              URL="${{ github.event.comment.html_url }}"
+              TYPE_EMOJI="✉️"
+              ;;
+            "pull_request_review")
+              TITLE="${{ github.event.pull_request.title }}"
+              URL="${{ github.event.pull_request.html_url }}"
+              TYPE_EMOJI="🧐"
+              ;;
+            *)
+              echo "Unhandled event type: $EVENT_TYPE"
+              exit 1
+              ;;
+          esac
+          
+          # Construct message with markdown
+          MESSAGE="
+          ${TYPE_EMOJI}  *${ACTOR}* *${EVENT_ACTION^}* *${EVENT_TYPE}*
+          
+          *${TITLE}*
+          ${REPO} | ${BRANCH_NAME}
+          " 
+          
+          # Send message with inline keyboard
+          PAYLOAD=$(jq -n \
+            --arg chat_id "$TELEGRAM_CHAT_ID" \
+            --arg text "$MESSAGE" \
+            --arg url "$URL" \
+            '{
+              chat_id: $chat_id,
+              text: $text,
+              parse_mode: "Markdown",
+              reply_markup: {
+                inline_keyboard: [[
+                  {
+                    text: "Open in GitHub 🔗",
+                    url: $url
+                  }
+                ]]
+              }
+            }')
+          
+          curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
+               -H "Content-Type: application/json" \
+               -d "$PAYLOAD"
+

@@ -1,0 +1,45 @@
+name: Sales Link CI/CD pipeline
+
+on:
+  push:
+    branches:
+      - dev
+
+jobs:
+  qa-deploy:
+    if: github.ref == 'refs/heads/qa'
+    name: Deploy code on QA Server
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout the files
+        uses: actions/checkout@v2
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.3
+
+      - name: Install Dependencies
+        run: composer install -q --no-ansi --no-interaction --no-scripts --no-progress --prefer-dist
+
+      - name: Laravel Commands
+        run: |
+          php artisan config:clear
+          php artisan cache:clear
+
+      - name: Deploy to QA Server
+        uses: easingthemes/ssh-deploy@main
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_KEY_QA }}
+          ARGS: >-
+            -rltgoDzvO
+            --exclude='/.env'
+            --exclude='/bootstrap/cache'
+            --del
+          REMOTE_HOST: ${{ vars.HOST_QA }}
+          REMOTE_USER: ${{ vars.USERNAME_QA }}
+          TARGET: ${{ vars.TARGET_DIR_QA }}
+          SCRIPT_AFTER: |
+            cd ${{ vars.TARGET_DIR_QA }}
+            php artisan migrate
