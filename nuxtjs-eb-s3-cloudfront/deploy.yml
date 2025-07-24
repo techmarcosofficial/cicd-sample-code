@@ -1,0 +1,60 @@
+name: Deploy Nuxt App to S3 + CloudFront
+
+on:
+  push:
+    branches:
+      - dev  # Set your production branch
+
+permissions:
+  id-token: write  # Required for GitHub OIDC
+  contents: read
+
+jobs:
+  deploy:
+    name: CI/CD to S3
+    runs-on: ubuntu-latest
+
+    env:
+      AWS_REGION: eu-west-1
+      S3_BUCKET: kess-satellites
+      CLOUDFRONT_DISTRIBUTION: EXXXXXXXXXXXXY
+
+    steps:
+      
+      # 1. Checkout & Setup
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 21.7.3   # Match your local build version
+
+      # 2. Install & Build
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build Nuxt App
+        run: npm run generate
+        env:
+          NODE_ENV: production
+
+      # 3. Auth to AWS
+      - name: Configure AWS Credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::xxxxxxxxxxxx:role/GitHubEBDeployRole
+          role-session-name: GitHubDeploySession
+          aws-region: ${{ env.AWS_REGION }}
+
+      # 4. Upload Static Files to S3
+      - name: Upload Nuxt Static Site to S3
+        run: |
+          aws s3 sync .output/public s3://$S3_BUCKET --delete    
+     
+      # 5. Invalidate CloudFront Cache
+      - name: Invalidate CloudFront Cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id $CLOUDFRONT_DISTRIBUTION \
+            --paths "/*"
